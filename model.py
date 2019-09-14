@@ -1,49 +1,56 @@
+import torch
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from activations import activations
- 
 
-def forward(X, W, U, V, activation, activation_p):
-    Z = W @ X + U
+
+def forward(X, W, U, V, activation, activation_p, Nx):
+    Z = torch.bmm(W.repeat(Nx, 1, 1), X) + U.repeat(Nx, 1, 1)
     A = activation(Z)
-    N = V @ A
+    N = torch.bmm(V.repeat(Nx, 1, 1), A)
  
     new_A = activation_p(Z)
     # calculate P_i*V_i in this case P == W
-    new_V = np.multiply(W.T, V)
+    new_V = torch.mul(W.t(), V)
     # print("new_A: " + str(new_A.shape))
     # print("new_V: " + str(new_V.shape))
-    N_g = new_V @ new_A
+    N_g = torch.bmm(new_V.repeat(Nx, 1, 1), new_A)
+    # print("Z " + str(Z.shape))
+    # print("A " + str(A.shape))
+    # print("W " + str(W.shape))
+    # print("U " + str(U.shape))
+    # print("V " + str(V.shape))
+    # print("X " + str(X.shape))
+    # print("W repeated " + str(W.repeat(Nx, 1, 1).shape))
+    # print("U repeated " + str(U.repeat(Nx, 1, 1).shape))
     return N, N_g, A, Z
 
 
-def compute_cost(y_0, X_i, N, N_g):
-    y = y_0 + X_i * N
-    dy_dx = N + (X_i * N_g)
-    sqrt_cost = dy_dx - f(X_i, y)
+def compute_cost(y_0, X, N, N_g):
+    y = y_0 + X * N
+    dy_dx = N + (X * N_g)
+    sqrt_cost = dy_dx - f(X, y)
     cost = sqrt_cost ** 2
     return cost, sqrt_cost
  
 
-def backwards(activation_p, activation_pp, sqrt_cost, Z, A, X_i, V, W):
-    # gp = g_prime
+def backwards(activation_p, activation_pp, sqrt_cost, Z, A, X, V, W, Nx, n_h):
     sigma_p = activation_p(Z)
-    # gpp == g_double_prime
     sigma_pp = activation_pp(Z)
 
-    P = W.T
+    P = W.t()
 
-    dV = 2 * sqrt_cost * (A.T + (X_i * np.multiply(P, sigma_p.T)))
+    dV = 2 * sqrt_cost * (A.reshape(Nx, 1, n_h) + (X * (P * sigma_p.reshape(Nx, 1, n_h))))
     dW = (
         2 * sqrt_cost *
         (
-            np.multiply(V.T, sigma_p) * X_i +
-            X_i * V.T * P.T * sigma_pp + V.T * sigma_p
+            np.multiply(V.t(), sigma_p) * X +
+            X * V.t() * P.t() * sigma_pp + V.t() * sigma_p
         )
     )
     dU = 2 * sqrt_cost * (
-        np.multiply(V, P).T * sigma_pp
+        np.multiply(V, P).t() * sigma_pp
     )
 
     return dV, dW, dU
@@ -51,38 +58,36 @@ def backwards(activation_p, activation_pp, sqrt_cost, Z, A, X_i, V, W):
 
 def init_values(interval, dx, n_h):
     Nx = int((interval[1] - interval[0]) / dx)
-    X = np.linspace(interval[0], interval[1], Nx)
-    W = np.random.randn(n_h, 1)
-    U = np.random.randn(n_h, 1)
-    V = np.random.randn(1, n_h)
+    X = torch.linspace(interval[0], interval[1], Nx).reshape(Nx, 1, 1)
+    W = torch.randn(n_h, 1)
+    U = torch.randn(n_h, 1)
+    V = torch.randn(1, n_h)
  
-    return X, W, U, V
+    return Nx, X, W, U, V
  
 
 def f(X, Y):
-    return np.cos(X)
+    return torch.cos(X)
  
 
 def exact_solution(X):
-    return np.sin(X)
+    return torch.sin(X)
  
 
-def display_results(X, W, U, V, activation, activation_p, y_0):
-    exact = exact_solution(X)
-    exact_der = f(X, exact)
+def display_results(X, W, U, V, activation, activation_p, y_0, Nx):
+    exact = exact_solution(X).squeeze().numpy()
+    exact_der = f(X, exact).squeeze().numpy()
     my_solution = []
     my_der = []
-    for x in X:
-        x_matrix = np.array([[x]])
-        ans_matrix, der_matrix = forward(x_matrix, W, U, V, activation, activation_p)[0:2]
-        ans = y_0 + x*ans_matrix
-        der = ans_matrix + x * der_matrix
-        my_solution.append(ans[0][0])
-        my_der.append(der[0][0])
-    my_solution = np.array(my_solution)
-    my_der = np.array(my_der)
- 
- 
+
+    ans_matrix, der_matrix = forward(X, W, U, V, activation, activation_p, Nx)[0:2]
+
+    ans = y_0 + X*ans_matrix
+    der = ans_matrix + X * der_matrix
+
+    my_solution = ans.squeeze().numpy()
+    my_der = der.squeeze().numpy()
+    X = X.squeeze().numpy()
  
     fig1 = plt.subplot("121")
     plt.plot(X, exact)
@@ -95,41 +100,40 @@ def display_results(X, W, U, V, activation, activation_p, y_0):
  
 def main():
     interval = (0, 20)
-    dx = 0.2
-    n_h = 15
+    dx = 0.5
+    n_h = 50
     y_0 = 0
 
-    X, W, U, V = init_values(interval, dx, n_h)
-    m = len(X)
+    m, X, W, U, V = init_values(interval, dx, n_h)
 
     # activation funciton and derivatives
     activation, activation_p, activation_pp  = activations["sine"]
 
-    epochs = 4000
-    alpha = 0.00002
+    epochs = 3000
+    alpha = 0.00001
+
+    # costs = np.zeros(epochs)
 
     for epoch in tqdm(range(epochs)):
-        dV = 0
-        dW = 0
-        dU = 0
+        N, N_g, A, Z = forward(X, W, U, V, activation, activation_p, m)
+        cost, sqrt_cost = compute_cost(y_0, X, N, N_g)
+        dV, dW, dU = backwards(activation_p, activation_pp, sqrt_cost, Z, A, X, V, W, m, n_h)
 
-        for i in range(m):
-            X_i = np.array([[X[i]]])
-            N, N_g, A, Z = forward(X_i, W, U, V, activation, activation_p)
-            cost, sqrt_cost = compute_cost(y_0, X_i, N, N_g)
-            dV_i, dW_i, dU_i = backwards(activation_p, activation_pp, sqrt_cost, Z, A, X_i, V, W)
-            dV += dV_i
-            dU += dU_i
-            dW += dW_i
+        W -= alpha * torch.sum(dW, 0)
+        U -= alpha * torch.sum(dU, 0)
+        V -= alpha * torch.sum(dV, 0)
 
-        V -= dV * alpha
-        W -= dW * alpha
-        U -= dU * alpha
-        if epoch % 800 == 0:
-            print(cost)
-            display_results(X, W, U, V, activation, activation_p, y_0)
+        # costs[epoch] = float(torch.sum(cost).data)
+        if epoch == 1000:
+            alpha *= 4
+        # if epoch % 1000 == 0 :
+        #     display_results(X, W, U, V, activation, activation_p, y_0, m)
 
-    display_results(X, W, U, V, activation, activation_p, y_0)
+    # X_axis = np.linspace(1, epochs, epochs)
+    # plt.plot(X_axis[100:], costs[100:])
+    # plt.show()
+
+    display_results(X, W, U, V, activation, activation_p, y_0, m)
 
 
 if __name__ == "__main__":
