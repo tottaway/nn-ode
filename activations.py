@@ -13,3 +13,4 @@ activations = {
     "sigmoid": (torch.sigmoid, gp, gpp),
     "sine": (torch.sin, torch.cos, lambda x: -torch.sin(x))
 }
+

@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 from activations import activations
 
 
@@ -32,7 +33,7 @@ def compute_cost(y_0, X, N, N_g):
     dy_dx = N + (X * N_g)
     sqrt_cost = dy_dx - f(X, y)
     cost = sqrt_cost ** 2
-    return cost, sqrt_cost
+    return y, cost, sqrt_cost
  
 
 def backwards(activation_p, activation_pp, sqrt_cost, Z, A, X, V, W, Nx, n_h):
@@ -67,11 +68,11 @@ def init_values(interval, dx, n_h):
  
 
 def f(X, Y):
-    return torch.cos(X)
+    return torch.cos(3*X) * (X ** 2) + torch.sin(3*X) * 2* X
  
 
-def exact_solution(X):
-    return torch.sin(X)
+# def exact_solution(X):
+#     return torch.sin(X)
  
 
 def display_results(X, W, U, V, activation, activation_p, y_0, Nx):
@@ -99,9 +100,9 @@ def display_results(X, W, U, V, activation, activation_p, y_0, Nx):
  
  
 def main():
-    interval = (0, 20)
-    dx = 0.5
-    n_h = 50
+    interval = (0, 5)
+    dx = 0.05
+    n_h = 300
     y_0 = 0
 
     m, X, W, U, V = init_values(interval, dx, n_h)
@@ -110,22 +111,24 @@ def main():
     activation, activation_p, activation_pp  = activations["sine"]
 
     epochs = 3000
-    alpha = 0.00001
+    alpha = 0.0000001
+
+    Ys = []
 
     # costs = np.zeros(epochs)
 
     for epoch in tqdm(range(epochs)):
         N, N_g, A, Z = forward(X, W, U, V, activation, activation_p, m)
-        cost, sqrt_cost = compute_cost(y_0, X, N, N_g)
+        Y, cost, sqrt_cost = compute_cost(y_0, X, N, N_g)
+        Ys.append(Y)
         dV, dW, dU = backwards(activation_p, activation_pp, sqrt_cost, Z, A, X, V, W, m, n_h)
 
         W -= alpha * torch.sum(dW, 0)
         U -= alpha * torch.sum(dU, 0)
-        V -= alpha * torch.sum(dV, 0)
-
+        V -= alpha * torch.sum(dV, 0) 
         # costs[epoch] = float(torch.sum(cost).data)
-        if epoch == 1000:
-            alpha *= 4
+        # if epoch == 1000:
+        #     alpha *= 4
         # if epoch % 1000 == 0 :
         #     display_results(X, W, U, V, activation, activation_p, y_0, m)
 
@@ -133,7 +136,24 @@ def main():
     # plt.plot(X_axis[100:], costs[100:])
     # plt.show()
 
-    display_results(X, W, U, V, activation, activation_p, y_0, m)
+    # display_results(X, W, U, V, activation, activation_p, y_0, m)
+
+    animate(X, Ys, epochs)
+
+def animate(X, Ys, epochs):
+    fig = plt.figure()
+    plt.xlabel("X")
+    plt.ylabel("Y")
+    plt.ylim(-5, 5)
+    line, = plt.plot(X.squeeze().numpy(), Ys[0].squeeze().numpy())
+
+    def update(t):
+        plt.ylim(torch.min(Ys[3*t]), torch.max(Ys[3*t]))
+        line.set_data(X.squeeze().numpy(), Ys[3*t].squeeze().numpy())
+        return line,
+    
+    anim = FuncAnimation(fig, update, frames=epochs, interval=10, blit=True)
+    plt.show()
 
 
 if __name__ == "__main__":
